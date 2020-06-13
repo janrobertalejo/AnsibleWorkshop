@@ -1,69 +1,36 @@
 ---
-  - name: Test Playbook
-    hosts: all
-
-    tasks:
-    - name: Ping all nodes
-      ping:
-
-    - name: see whoami
-      shell: "whoami"
-      register: output 
-
-    - name: look output 
-      debug:
-        msg: "{{ output.stdout }}"
-
-
   - name: Install apache to web server
     hosts: web
 
     tasks:
-    - name: install apache2 in web server 
-      apt:
-        name: apache2
-        state: latest
-        update_cache: yes
-
-    - name: start and enable apache2 service 
-      service:
-        name: apache2
-        state: started
-        enabled: yes
-
-    - name: Create index.html in /var/www/html
-      copy: 
+        name: install packages
+      vars:
+        service: apache2
+        package: apache2
+       
+    - name: user service role
+      include_role:
+        name: configservice
+      vars:
         content: "{{ ansible_default_ipv4.address}} {{ ansible_hostname}}"
         dest: /var/www/html/index.html
         owner: training 
         group: training 
         mode: '0755'
-    - name: restart apache2
-      service:
-        name: apache2
-        state: restarted
+        service: apache2
 
   - name: Install DB in node3
     hosts: db
 
     tasks:
-    - name: install InfluxDB key 
-      apt_key:
+    - name: use installpackage role
+      include_role:
+        name: installpackages
+      vars:
         url: https://repos.influxdata.com/influxdb.key
-        state: present
-
-    - name: add InfluxDB repository
-      apt_repository:
         repo: deb https://repos.influxdata.com/ubuntu bionic stable
-        state: present 
-        filename: influxdb.list
-
-    - name: install InfluxDB
-      apt:
-        name: influxdb
-        state: latest
-        update_cache: yes
-
+        package: "influxdb"
+        service: "influxdb"
 
     - name: copy configuration file to /etc/influxdb/influxdb.conf
       copy:
@@ -71,13 +38,15 @@
         dest: /etc/influxdb/influxdb.conf
         owner: root
         group: root
-        mode: '0644' 
+        mode: '0644'
+      register: dbfile
     
     - name: restart influxdb service
       service:
         name: influxdb
         state: restarted
         enabled: yes
+      when: dbfile.changed
 
   - name: Add database and user from control to db
     hosts: control
@@ -116,30 +85,15 @@
     hosts: monitor
 
     tasks:  
-    - name: add apt key for Grafana
-      apt_key:
-        url: https://packages.grafana.com/gpg.key
-        state: present
+    - name: use installpackages role
+      include_role:
+        name: installpackages
+      vars:
+        url: "https://packages.grafana.com/gpg.key"
+        repo: " deb https://packages.grafana.com/oss/deb stable main"
+        package: "grafana"
+        service: "grafana-server"
 
-
-    - name: add repository for Grafana
-      apt_repository: 
-        repo: deb https://packages.grafana.com/oss/deb stable main
-        state: present
-        filename: grafana.list
-
-    - name: install grafana 
-      apt: 
-        name: grafana
-        state: latest
-        update_cache: yes
-
-
-    - name: start and enable grafana
-      service:
-        name: grafana-server 
-        state: started
-        enabled: yes
 
 
   - name: Install servermetrics.py
@@ -160,15 +114,42 @@
         executable: pip3
 
     - name: render servermetrics.py in /home/training
-      template:
-        src: servermetrics.py.j2
-        dest: /home/training/servermetrics.py
-        owner: training
-        group: training
-        mode: '0755'
+      block:
+        - name: render test template
+          template:
+            src: servermetrics.py.j2
+            dest: /home/training/testservermetrics.py
+            owner: training
+            group: training
+            mode: '0755'
 
-    - name: run once servermetrics.py
-      shell: "python3 /home/training/servermetrics.py prod"
+        - name: test servermetrics 
+          shell: "python3 /home/training/servermetrics.py test"
+          register: test_servermetrics
+
+
+        - name: remove test file
+          file:   
+            path: /home/training/testservermetrics.py
+            state: absent        
+
+        - name: render prod file
+          template:
+            src: servermetrics.py.j2
+            dest: /home/training/servermetrics.py
+            owner: training 
+            group: training
+            mode: '0755' 
+          register: metricsfile
+
+        - name: run once servermetrics.py
+          shell: "python3 /home/training/servermetrics.py prod"
+          when: metricsfile.changed
+      rescue:
+        - name: remove test file 
+          file:
+            path: /home/training/testservermetrics.py
+            state: absent      
 
     - name: add in crontab
       cron:

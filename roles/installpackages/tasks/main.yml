@@ -1,0 +1,28 @@
+---
+# tasks file for roles/installpackages
+- name: add apt key
+  apt_key:
+    url: "{{ url }}"
+    state: present
+  when: url != ""
+
+- name: add repository
+  apt_repository:
+    repo: "{{ repo }}"
+    state: present
+    filename: "{{ package }}.list "
+  when: repo != ""
+
+- name: install package
+  apt:
+    name: "{{ package }}"
+    state: latest
+    update_cache: yes
+
+- name: start and enable service
+  service:
+    name: "{{ service }}"
+    state: started
+    enabled: yes
+
+
